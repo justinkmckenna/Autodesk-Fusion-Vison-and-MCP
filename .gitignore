@@ -1,0 +1,16 @@
+# Secrets
+.env
+
+# Local screenshots
+full-desktop-screenshot.png
+
+# Logs/artifacts
+logs/
+
+# OS junk
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/

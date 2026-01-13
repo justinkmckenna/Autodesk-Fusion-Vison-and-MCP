@@ -1,0 +1,838 @@
+#!/usr/bin/env python3
+import argparse
+import base64
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+
+LOG_ROOT = os.environ.get(
+    "FUSION_MCP_LOG_ROOT",
+    os.path.join(os.path.dirname(__file__), "logs"),
+)
+ENV_PATH = os.environ.get(
+    "FUSION_ENV_PATH",
+    os.path.join(os.path.dirname(__file__), ".env"),
+)
+CALIBRATION_PATH = os.environ.get(
+    "FUSION_MCP_CALIBRATION",
+    os.path.join(os.path.dirname(__file__), "calibration.json"),
+)
+
+
+def _now_stamp():
+    return datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
+
+
+def _ensure_dir(path):
+    os.makedirs(path, exist_ok=True)
+
+
+def _load_calibration():
+    if not os.path.exists(CALIBRATION_PATH):
+        return {}
+    try:
+        with open(CALIBRATION_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def _get_region(calibration, name):
+    region = calibration.get(name)
+    if not region:
+        raise KeyError(f"Region not found in calibration.json: {name}")
+    return region
+
+
+def _load_env():
+    if not os.path.exists(ENV_PATH):
+        return
+    try:
+        with open(ENV_PATH, "r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip("\"'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        pass
+
+
+def _center_of_bbox(bbox):
+    return (bbox["x"] + bbox["width"] / 2.0, bbox["y"] + bbox["height"] / 2.0)
+
+
+class MCPClient:
+    def __init__(self, server_cmd=None, connect_addr=None):
+        self.process = None
+        self.sock = None
+        if connect_addr:
+            host, port = connect_addr
+            self.sock = socket.create_connection((host, port))
+            self.sock_file = self.sock.makefile("rwb")
+        else:
+            self.process = subprocess.Popen(
+                server_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        self._id = 0
+
+    def close(self):
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        if self.process:
+            try:
+                self.process.terminate()
+            except Exception:
+                pass
+
+    def _send(self, payload):
+        data = (json.dumps(payload) + "\n")
+        if self.sock:
+            self.sock_file.write(data.encode("utf-8"))
+            self.sock_file.flush()
+        else:
+            self.process.stdin.write(data)
+            self.process.stdin.flush()
+
+    def _recv(self):
+        if self.sock:
+            line = self.sock_file.readline()
+            if not line:
+                raise RuntimeError("MCP server disconnected")
+            line = line.decode("utf-8")
+        else:
+            line = self.process.stdout.readline()
+        if not line:
+            raise RuntimeError("MCP server disconnected")
+        return json.loads(line)
+
+    def request(self, method, params=None):
+        self._id += 1
+        payload = {"jsonrpc": "2.0", "id": self._id, "method": method}
+        if params is not None:
+            payload["params"] = params
+        self._send(payload)
+        response = self._recv()
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        return response.get("result")
+
+    def call_tool(self, name, arguments=None):
+        arguments = arguments or {}
+        result = self.request("tools/call", {"name": name, "arguments": arguments})
+        if result.get("isError"):
+            raise RuntimeError(result.get("content"))
+        content = result.get("content", [])
+        if content and content[0].get("type") == "text":
+            text = content[0].get("text", "")
+            try:
+                return json.loads(text)
+            except Exception:
+                return {"raw": text}
+        return {}
+
+
+def vision_stub(image_paths, goal):
+    return {
+        "schema_version": "1.0",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "ui_state": {
+            "app": "Autodesk Fusion",
+            "document_name": None,
+            "workspace": "Unknown",
+            "active_tab": "Unknown",
+            "active_command": None,
+            "selection_summary": {"selection_type": "unknown", "count": 0},
+            "panels_visible": {
+                "browser": True,
+                "timeline": True,
+                "sketch_palette": False,
+                "inspect_panel": False,
+                "measure_dialog": False,
+            },
+            "view_mode": {"camera": "unknown", "visual_style": "unknown"},
+        },
+        "extraction": {
+            "sketch_context": {
+                "is_editing_sketch": False,
+                "sketch_name": None,
+                "dimensions_detected": [],
+                "constraints_detected": [],
+            },
+            "measurements": {"measure_dialog_open": False, "entries": []},
+            "timeline": {"visible": True, "highlighted_feature": None, "features_visible": []},
+            "alerts": [],
+        },
+        "task_state": {
+            "goal": goal,
+            "requirements": {
+                "units": "mm",
+                "must_preserve": [
+                    "front_frame_interface",
+                    "middle_plate_alignment",
+                    "overall_back_plate_outer_dimensions",
+                ],
+                "must_fit": [
+                    "raspberry_pi_3b_board_outline",
+                    "mount_hole_pattern",
+                    "ports_clearance",
+                ],
+                "tolerances": {
+                    "general_clearance_mm": 0.8,
+                    "port_clearance_mm": 1.2,
+                    "screw_clearance_mm": 0.4,
+                },
+            },
+            "known_targets": {"pi3b_mount_hole_spacing_mm": {"x": 58.0, "y": 49.0}},
+            "progress": {
+                "identified_back_plate_component": False,
+                "located_mount_feature": False,
+                "updated_hole_pattern": False,
+                "updated_port_cutouts": False,
+                "verification_passed": False,
+            },
+        },
+        "proposed_next_steps": [
+            {
+                "intent": "request_better_view",
+                "target": "canvas",
+                "why": "Stub observation only.",
+                "needs_confirmation": False,
+                "confidence": 0.2,
+            }
+        ],
+        "recapture_plan": [
+            {
+                "region_name": "canvas",
+                "reason": "Ensure we can see the model.",
+                "preferred_action": "capture_screen",
+            }
+        ],
+        "confidence": 0.4,
+        "notes": "Vision model not yet connected.",
+        "image_paths": image_paths,
+    }
+
+
+def _basic_validate_observation(observation):
+    required = ["schema_version", "timestamp", "ui_state", "extraction", "task_state", "confidence"]
+    for key in required:
+        if key not in observation:
+            raise ValueError(f"VisionObservation missing required field: {key}")
+    ui_state = observation.get("ui_state", {})
+    if "app" not in ui_state:
+        raise ValueError("VisionObservation ui_state.app missing")
+    if "panels_visible" not in ui_state:
+        raise ValueError("VisionObservation ui_state.panels_visible missing")
+    confidence = observation.get("confidence")
+    if not isinstance(confidence, (int, float)):
+        raise ValueError("VisionObservation confidence must be a number")
+    if not (0.0 <= float(confidence) <= 1.0):
+        raise ValueError("VisionObservation confidence must be between 0.0 and 1.0")
+
+    for feature in observation.get("extraction", {}).get("timeline", {}).get("features_visible", []):
+        bbox = feature.get("screen_bbox", {})
+        for key in ("x", "y", "width", "height"):
+            if not isinstance(bbox.get(key), int):
+                raise ValueError("screen_bbox fields must be integers")
+    for alert in observation.get("extraction", {}).get("alerts", []):
+        bbox = alert.get("screen_bbox")
+        if bbox:
+            for key in ("x", "y", "width", "height"):
+                if not isinstance(bbox.get(key), int):
+                    raise ValueError("alert screen_bbox fields must be integers")
+
+
+def _normalize_observation(partial, goal, image_paths):
+    observation = _error_observation(goal, image_paths, "normalized")
+    if not isinstance(partial, dict):
+        return observation
+
+    observation["notes"] = partial.get("notes", "")
+    observation["schema_version"] = partial.get("schema_version", "1.0")
+    observation["timestamp"] = partial.get("timestamp", datetime.utcnow().isoformat() + "Z")
+
+    ui_state = partial.get("ui_state", {})
+    observation["ui_state"].update(ui_state)
+    if not observation["ui_state"].get("app"):
+        observation["ui_state"]["app"] = "Autodesk Fusion"
+    panels = observation["ui_state"].get("panels_visible", {})
+
+    extraction = partial.get("extraction", {})
+    observation["extraction"].update({k: v for k, v in extraction.items() if k != "timeline"})
+
+    timeline = extraction.get("timeline", {}) if isinstance(extraction, dict) else {}
+    features = timeline.get("features_visible", []) if isinstance(timeline, dict) else []
+    normalized_features = []
+    for feature in features[:8]:
+        bbox = feature.get("screen_bbox")
+        if isinstance(bbox, list) and len(bbox) == 4:
+            bbox = {"x": int(bbox[0]), "y": int(bbox[1]), "width": int(bbox[2]), "height": int(bbox[3])}
+        elif isinstance(bbox, dict):
+            bbox = {
+                "x": int(bbox.get("x", 0)),
+                "y": int(bbox.get("y", 0)),
+                "width": int(bbox.get("width", 0)),
+                "height": int(bbox.get("height", 0)),
+            }
+        else:
+            bbox = {"x": 0, "y": 0, "width": 0, "height": 0}
+        normalized_features.append(
+            {
+                "name": feature.get("name", ""),
+                "type_hint": feature.get("type_hint", "unknown"),
+                "is_suppressed": bool(feature.get("is_suppressed", False)),
+                "screen_bbox": bbox,
+                "confidence": float(feature.get("confidence", 0.0)),
+            }
+        )
+
+    observation["extraction"]["timeline"] = {
+        "visible": timeline.get("visible", bool(normalized_features)),
+        "highlighted_feature": timeline.get("highlighted_feature"),
+        "features_visible": normalized_features,
+    }
+
+    if normalized_features:
+        panels["timeline"] = True
+    observation["ui_state"]["panels_visible"] = panels
+
+    alerts = []
+    if isinstance(extraction, dict) and "alerts" in extraction:
+        alerts = extraction.get("alerts", [])
+    if isinstance(timeline, dict) and "alerts" in timeline:
+        alerts = timeline.get("alerts", []) or alerts
+    if alerts:
+        observation["extraction"]["alerts"] = alerts
+
+    if "confidence" in partial:
+        observation["confidence"] = float(partial.get("confidence", 0.0))
+
+    if "task_state" in partial and isinstance(partial["task_state"], dict):
+        observation["task_state"].update(partial["task_state"])
+    if isinstance(partial.get("proposed_next_steps"), list):
+        observation["proposed_next_steps"] = partial["proposed_next_steps"]
+    if isinstance(partial.get("recapture_plan"), list):
+        observation["recapture_plan"] = partial["recapture_plan"]
+    return observation
+
+
+def _read_image_b64(path):
+    with open(path, "rb") as fh:
+        return base64.b64encode(fh.read()).decode("ascii")
+
+
+def _build_vision_prompt():
+    return (
+        "You are a vision extractor for Autodesk Fusion UI. "
+        "Return JSON only, strictly matching VisionObservation schema v1.0. "
+        "Include all required top-level fields: schema_version, timestamp, ui_state, "
+        "extraction, task_state, proposed_next_steps, recapture_plan, confidence, notes. "
+        "Focus primarily on the timeline image: identify up to 8 feature names, "
+        "estimate their bounding boxes relative to the timeline image, and detect any error alerts. "
+        "For timeline features, populate extraction.timeline.features_visible with name, "
+        "type_hint, is_suppressed, screen_bbox {x,y,width,height} as integers, and confidence. "
+        "Set ui_state.panels_visible.timeline true if the timeline is visible. "
+        "If the browser panel is visible, set ui_state.panels_visible.browser true. "
+        "If error markers are visible, add them to extraction.alerts with severity and text. "
+        "If unsure, leave fields empty and lower confidence. No extra text."
+    )
+
+
+def _vision_request_payload(image_paths, goal):
+    images = []
+    for path in image_paths:
+        b64 = _read_image_b64(path)
+        images.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+
+    return {
+        "model": os.environ.get("FUSION_VISION_MODEL", "gpt-4o-mini"),
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": _build_vision_prompt()},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Goal: "
+                            + goal
+                            + ". Extract only timeline-focused data for now (timeline features + alerts). "
+                            + "Return JSON-only VisionObservation."
+                        ),
+                    },
+                    *images,
+                ],
+            },
+        ],
+    }
+
+
+def _parse_retry_after(headers):
+    value = headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
+
+
+def vision_client(
+    image_paths,
+    goal,
+    max_attempts=3,
+    initial_delay=0.0,
+    raw_log_path=None,
+):
+    api_key = os.environ.get("FUSION_VISION_API_KEY")
+    endpoint = os.environ.get("FUSION_VISION_ENDPOINT", "https://api.openai.com/v1/chat/completions")
+    if not api_key:
+        raise RuntimeError("FUSION_VISION_API_KEY is not set")
+
+    if initial_delay > 0:
+        time.sleep(initial_delay)
+
+    payload = _vision_request_payload(image_paths, goal)
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                body = response.read().decode("utf-8")
+            last_error = None
+            break
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code == 429 and attempt < max_attempts:
+                retry_after = _parse_retry_after(exc.headers)
+                sleep_for = retry_after if retry_after is not None else (2 ** (attempt - 1))
+                time.sleep(sleep_for)
+                continue
+            raise RuntimeError(f"Vision request failed: HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            last_error = exc
+            raise RuntimeError(f"Vision request failed: {exc}") from exc
+    if last_error is not None:
+        raise RuntimeError("Vision request failed after retries")
+
+    parsed = json.loads(body)
+    content = parsed["choices"][0]["message"]["content"]
+    if raw_log_path:
+        try:
+            with open(raw_log_path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        except Exception:
+            pass
+    parsed_content = json.loads(content)
+    observation = _normalize_observation(parsed_content, goal, image_paths)
+    _basic_validate_observation(observation)
+    observation["image_paths"] = image_paths
+    return observation
+
+
+def vision_call_or_stub(image_paths, goal, allow_stub=True):
+    try:
+        observation = vision_client(image_paths, goal)
+        return observation
+    except Exception as exc:
+        if allow_stub:
+            fallback = vision_stub(image_paths, goal)
+            fallback["confidence"] = 0.0
+            fallback["notes"] = f"Vision fallback: {exc}"
+            return fallback
+        raise
+
+
+def _safe_observation_on_invalid(observation, error):
+    observation["confidence"] = 0.0
+    observation["notes"] = f"Invalid VisionObservation: {error}"
+    return observation
+
+
+def _error_observation(goal, image_paths, error):
+    return {
+        "schema_version": "1.0",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "ui_state": {
+            "app": "Autodesk Fusion",
+            "document_name": None,
+            "workspace": "Unknown",
+            "active_tab": "Unknown",
+            "active_command": None,
+            "selection_summary": {"selection_type": "unknown", "count": 0},
+            "panels_visible": {
+                "browser": False,
+                "timeline": False,
+                "sketch_palette": False,
+                "inspect_panel": False,
+                "measure_dialog": False,
+            },
+            "view_mode": {"camera": "unknown", "visual_style": "unknown"},
+        },
+        "extraction": {
+            "sketch_context": {
+                "is_editing_sketch": False,
+                "sketch_name": None,
+                "dimensions_detected": [],
+                "constraints_detected": [],
+            },
+            "measurements": {"measure_dialog_open": False, "entries": []},
+            "timeline": {"visible": False, "highlighted_feature": None, "features_visible": []},
+            "alerts": [],
+        },
+        "task_state": {
+            "goal": goal,
+            "requirements": {
+                "units": "mm",
+                "must_preserve": [],
+                "must_fit": [],
+                "tolerances": {},
+            },
+            "known_targets": {},
+            "progress": {
+                "identified_back_plate_component": False,
+                "located_mount_feature": False,
+                "updated_hole_pattern": False,
+                "updated_port_cutouts": False,
+                "verification_passed": False,
+            },
+        },
+        "proposed_next_steps": [],
+        "recapture_plan": [],
+        "confidence": 0.0,
+        "notes": f"Vision error: {error}",
+        "image_paths": image_paths,
+    }
+
+
+class Planner:
+    def __init__(self):
+        self.state = "BOOTSTRAP"
+        self.pending_action = None
+        self.stuck_count = 0
+        self.last_progress = None
+        self.vision_confirmed = False
+
+    def update_progress(self, progress):
+        if self.last_progress is None:
+            self.last_progress = progress.copy()
+            return
+        if progress != self.last_progress:
+            self.stuck_count = 0
+            self.last_progress = progress.copy()
+        else:
+            self.stuck_count += 1
+
+    def decide_action(self, observation):
+        if self.pending_action:
+            action = self.pending_action
+            self.pending_action = None
+            return action
+
+        if observation.get("confidence", 0) < 0.65:
+            return {"tool": "wait", "arguments": {"milliseconds": 250}, "intent": "wait"}
+
+        if self.state == "BOOTSTRAP":
+            self.state = "LOCATE"
+            return {"tool": "key_press", "arguments": {"keys": ["escape"]}, "intent": "escape"}
+        if self.state == "LOCATE":
+            self.state = "MEASURE_BASELINE"
+            return {"tool": "wait", "arguments": {"milliseconds": 300}, "intent": "navigate"}
+        if self.state == "MEASURE_BASELINE":
+            self.state = "EDIT"
+            return {"tool": "wait", "arguments": {"milliseconds": 300}, "intent": "measure"}
+        if self.state == "EDIT":
+            self.state = "VERIFY"
+            return {"tool": "wait", "arguments": {"milliseconds": 300}, "intent": "edit"}
+        if self.state == "VERIFY":
+            self.state = "DONE"
+            return {"tool": "wait", "arguments": {"milliseconds": 300}, "intent": "verify"}
+        return None
+
+
+def click_bbox_center(client, bbox, calibration, region_name, scale_factor=1.0):
+    region = _get_region(calibration, region_name)
+    center_x, center_y = _center_of_bbox(bbox)
+    abs_x = region["x"] + center_x * scale_factor
+    abs_y = region["y"] + center_y * scale_factor
+    return client.call_tool(
+        "mouse_click",
+        {"x": int(round(abs_x)), "y": int(round(abs_y))},
+    )
+
+
+def _log_action(actions_log, entry):
+    entry["timestamp"] = datetime.utcnow().isoformat() + "Z"
+    with open(actions_log, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
+
+
+def _update_scale_from_capture(screen_info, capture):
+    display_w = screen_info.get("width")
+    display_h = screen_info.get("height")
+    image_w = capture.get("width")
+    image_h = capture.get("height")
+    if not all([display_w, display_h, image_w, image_h]):
+        return 1.0, None
+    ratio_w = image_w / float(display_w)
+    ratio_h = image_h / float(display_h)
+    ratio = (ratio_w + ratio_h) / 2.0
+    if 1.8 <= ratio <= 2.2:
+        return display_w / float(image_w), ratio
+    return 1.0, ratio
+
+
+def _capture_plan(observation, planner_state, calibration, force_measure=False):
+    regions = ["timeline", "canvas"]
+    if "browser" in calibration:
+        regions.append("browser")
+
+    measure_open = False
+    if observation:
+        measure_open = observation.get("extraction", {}).get("measurements", {}).get(
+            "measure_dialog_open",
+            False,
+        )
+    if force_measure or measure_open or planner_state == "VERIFY":
+        if "measure_panel" in calibration:
+            regions.append("measure_panel")
+
+    sketch_edit = False
+    if observation:
+        sketch_edit = observation.get("extraction", {}).get("sketch_context", {}).get(
+            "is_editing_sketch",
+            False,
+        )
+    if sketch_edit or planner_state == "EDIT":
+        if "sketch_palette" in calibration:
+            regions.append("sketch_palette")
+        if "sketch_dimension" in calibration:
+            regions.append("sketch_dimension")
+    return regions
+
+
+def _bootstrap(client, run_dir, calibration, vision_delay=0.0):
+    actions_log = os.path.join(run_dir, "actions.jsonl")
+    client.request("initialize", {})
+    client.call_tool("key_press", {"keys": ["escape"]})
+    client.call_tool("key_press", {"keys": ["escape"]})
+    _log_action(actions_log, {"tool": "key_press", "keys": ["escape", "escape"]})
+
+    captures = []
+    for region_name in ("timeline", "canvas", "browser"):
+        result = client.call_tool("capture_screen", {"region_name": region_name})
+        captures.append(result)
+        _log_action(actions_log, {"tool": "capture_screen", "region_name": region_name, "result": result})
+
+    image_paths = [item.get("image_path") for item in captures if item.get("image_path")]
+    try:
+        raw_path = os.path.join(run_dir, "vision_raw.txt")
+        observation = vision_client(
+            image_paths,
+            "Modify back plate to fit Raspberry Pi 3B",
+            initial_delay=vision_delay,
+            raw_log_path=raw_path,
+        )
+        try:
+            _basic_validate_observation(observation)
+        except Exception as exc:
+            observation = _safe_observation_on_invalid(observation, exc)
+    except Exception as exc:
+        observation = _error_observation("Modify back plate to fit Raspberry Pi 3B", image_paths, exc)
+    obs_path = os.path.join(run_dir, "observation.json")
+    with open(obs_path, "w", encoding="utf-8") as fh:
+        json.dump(observation, fh, indent=2)
+
+    ui_state = observation.get("ui_state", {})
+    panels = ui_state.get("panels_visible", {})
+    is_fusion = ui_state.get("app") == "Autodesk Fusion"
+    panels_ok = panels.get("browser") is True and panels.get("timeline") is True
+    if not (is_fusion and panels_ok):
+        print(
+            "Bootstrap failed: Ensure Autodesk Fusion is frontmost and the Browser + Timeline panels are visible."
+        )
+        return False, observation
+    return True, observation
+
+
+def run_simple(client, run_dir):
+    actions_log = os.path.join(run_dir, "actions.jsonl")
+    calibration = _load_calibration()
+    ok, observation = _bootstrap(client, run_dir, calibration)
+    if ok:
+        print(json.dumps(observation, indent=2))
+
+
+def run_loop(client, run_dir, max_steps, force_measure=False, vision_delay=0.0):
+    calibration = _load_calibration()
+    actions_log = os.path.join(run_dir, "actions.jsonl")
+    obs_dir = os.path.join(run_dir, "observations")
+    _ensure_dir(obs_dir)
+
+    planner = Planner()
+    ok, bootstrap_obs = _bootstrap(client, run_dir, calibration, vision_delay=vision_delay)
+    planner.vision_confirmed = ok
+    last_observation = bootstrap_obs
+    if not ok:
+        return
+
+    for step in range(max_steps):
+        try:
+            screen_info = client.call_tool("get_screen_info", {})
+            _log_action(actions_log, {"tool": "get_screen_info", "result": screen_info})
+        except Exception:
+            screen_info = {}
+
+        capture_regions = _capture_plan(last_observation, planner.state, calibration, force_measure=force_measure)
+        captures = []
+        for region_name in capture_regions:
+            result = client.call_tool("capture_screen", {"region_name": region_name})
+            _log_action(actions_log, {"tool": "capture_screen", "region_name": region_name, "result": result})
+            captures.append(result)
+
+        if captures and screen_info:
+            scale_factor, ratio = _update_scale_from_capture(screen_info, captures[0])
+            _log_action(
+                actions_log,
+                {
+                    "tool": "scale_check",
+                    "display": {"width": screen_info.get("width"), "height": screen_info.get("height")},
+                    "capture": {"width": captures[0].get("width"), "height": captures[0].get("height")},
+                    "ratio": ratio,
+                    "scale_factor": scale_factor,
+                },
+            )
+        else:
+            scale_factor = 1.0
+
+        image_paths = [item.get("image_path") for item in captures if item.get("image_path")]
+        try:
+            raw_path = os.path.join(obs_dir, f"vision_raw-{step+1:03d}.txt")
+            observation = vision_client(
+                image_paths,
+                "Modify back plate to fit Raspberry Pi 3B",
+                initial_delay=vision_delay,
+                raw_log_path=raw_path,
+            )
+            try:
+                _basic_validate_observation(observation)
+            except Exception as exc:
+                observation = _safe_observation_on_invalid(observation, exc)
+        except Exception as exc:
+            observation = _error_observation("Modify back plate to fit Raspberry Pi 3B", image_paths, exc)
+        obs_path = os.path.join(obs_dir, f"observation-{step+1:03d}.json")
+        with open(obs_path, "w", encoding="utf-8") as fh:
+            json.dump(observation, fh, indent=2)
+
+        last_observation = observation
+        planner.update_progress(observation["task_state"]["progress"])
+        if planner.stuck_count >= 8:
+            planner.state = "RECOVER"
+
+        if planner.state == "RECOVER":
+            action = {"tool": "wait", "arguments": {"milliseconds": 500}, "intent": "recover"}
+        else:
+            action = planner.decide_action(observation)
+
+        if action is None:
+            break
+
+        if not planner.vision_confirmed:
+            allowed = {"navigate", "measure", "request_better_view", "wait", "escape"}
+            if action.get("intent") not in allowed:
+                action = {"tool": "wait", "arguments": {"milliseconds": 300}, "intent": "wait"}
+
+        if action["intent"] == "edit":
+            snapshot = client.call_tool("save_snapshot", {"label": "pre-edit"})
+            _log_action(actions_log, {"tool": "save_snapshot", "result": snapshot})
+            planner.pending_action = action
+            continue
+
+        result = client.call_tool(action["tool"], action.get("arguments", {}))
+        _log_action(actions_log, {"tool": action["tool"], "arguments": action.get("arguments", {}), "result": result})
+
+        time.sleep(0.05)
+
+
+def main():
+    _load_env()
+    parser = argparse.ArgumentParser(description="Minimal MCP agent runner for Fusion.")
+    parser.add_argument("--loop", action="store_true", help="Run the planner loop.")
+    parser.add_argument("--max-steps", type=int, default=5, help="Max steps for loop mode.")
+    parser.add_argument(
+        "--force-measure",
+        action="store_true",
+        help="Always capture the measure_panel region each iteration.",
+    )
+    parser.add_argument(
+        "--vision-delay-ms",
+        type=int,
+        default=0,
+        help="Delay before each vision request (milliseconds).",
+    )
+    parser.add_argument(
+        "--connect",
+        type=str,
+        default=None,
+        help="Connect to an already running MCP server at host:port.",
+    )
+    args = parser.parse_args()
+
+    run_dir = os.path.join(LOG_ROOT, f"agent-run-{_now_stamp()}")
+    _ensure_dir(run_dir)
+
+    client = None
+    if args.connect:
+        if ":" not in args.connect:
+            raise SystemExit("--connect must be in host:port format")
+        host, port = args.connect.split(":", 1)
+        client = MCPClient(connect_addr=(host, int(port)))
+    else:
+        server_cmd = [sys.executable, os.path.join(os.path.dirname(__file__), "mcp_server.py")]
+        client = MCPClient(server_cmd)
+    try:
+        if args.loop:
+            run_loop(
+                client,
+                run_dir,
+                args.max_steps,
+                force_measure=args.force_measure,
+                vision_delay=args.vision_delay_ms / 1000.0,
+            )
+        else:
+            run_simple(client, run_dir)
+    finally:
+        client.close()
+
+
+if __name__ == "__main__":
+    main()
