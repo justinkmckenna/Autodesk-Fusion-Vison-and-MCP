@@ -36,16 +36,6 @@ python3 scripts/fusion_rpc_client.py measure_bbox
 python3 scripts/fusion_rpc_client.py measure_bbox --body "Body1"
 ```
 
-### Parameter Edit Commands (Milestone 4)
-```bash
-python3 scripts/fusion_rpc_client.py list_user_parameters
-python3 scripts/fusion_rpc_client.py get_user_parameter --param name=Height
-python3 scripts/fusion_rpc_client.py set_user_parameter --param name=Height --param expression="35 mm"
-python3 scripts/fusion_rpc_client.py create_param_box --param width_mm=30 --param depth_mm=30 --param height_param=Height --param height_expression="30 mm"
-python3 scripts/fusion_rpc_client.py delete_body --param body_name=Body2
-python3 scripts/fusion_rpc_client.py delete_user_parameter --param name=Height
-```
-
 ### Visual Diff (Pillow)
 ```bash
 python3 scripts/image_diff.py --before logs/capture_before.png --after logs/capture_after.png
