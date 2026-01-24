@@ -9,12 +9,4 @@ if [ -d "$CAPTURES_DIR" ]; then
   rm -f "$CAPTURES_DIR"/*.png
 fi
 
-if [ -d "$LOG_DIR" ]; then
-  rm -rf "$LOG_DIR"/agent-run-*
-fi
-
-if [ -f "$LOG_DIR/mcp_actions.jsonl" ]; then
-  : > "$LOG_DIR/mcp_actions.jsonl"
-fi
-
-echo "Cleared logs: captures, agent-run folders, and mcp_actions.jsonl"
+echo "Cleared logs: captures"

@@ -1,6 +1,3 @@
-# Secrets
-.env
-
 # Logs/artifacts
 logs/
 error.log
@@ -11,4 +8,3 @@ error.log
 # Python
 __pycache__/
 *.pyc
-.venv/
