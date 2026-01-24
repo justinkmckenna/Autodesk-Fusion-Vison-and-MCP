@@ -1,3 +1,1 @@
-pyautogui
-pillow
-pyobjc; platform_system == "Darwin"
+# No external dependencies required for the RPC add-in CLI.

@@ -1,9 +1,6 @@
 # Secrets
 .env
 
-# Local screenshots
-full-desktop-screenshot.png
-
 # Logs/artifacts
 logs/
 error.log

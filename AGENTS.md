@@ -4,17 +4,13 @@
 - `fusion_rpc_addin/FusionRPCAddIn/`: Fusion add-in source (runs inside Fusion).
 - `fusion_rpc_addin/FusionRPCAddIn/commands/`: RPC command modules (one file per command; hot-reloaded).
 - `scripts/`: CLI utilities such as `fusion_rpc_client.py`.
-- `agent_runner.py` / `mcp_server.py`: **Legacy/deprecated** UI/vision automation scaffolding (do not use for deterministic geometry ops).
 - `logs/`: runtime captures and observations (generated at runtime).
-- `calibration.json`: example screen region presets; customize per machine.
 - `.env` / `.env-example`: local configuration (API keys, endpoints).
 
 ## Build, Test, and Development Commands
 - `python3 -m pip install -r requirements.txt` — install dependencies.
 - `python3 scripts/fusion_rpc_client.py ping` — smoke test Fusion RPC add-in.
 - `python3 scripts/fusion_rpc_client.py reload_commands` — hot-reload RPC modules.
-- (Legacy/deprecated) `python3 agent_runner.py` — UI/vision scaffolding (not for deterministic geometry ops).
-- (Legacy/deprecated) `python3 mcp_server.py --tcp-host 127.0.0.1 --tcp-port 8765` — legacy MCP server.
 
 ## Coding Style & Naming Conventions
 - Python code uses 4-space indentation; keep functions small and deterministic.
@@ -45,4 +41,3 @@
 - For hot-reload to see local changes, symlink the deployed add-in to this repo:
   - `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionRPCAddIn/FusionRPCAddIn.py`
   - `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionRPCAddIn/commands`
-- macOS **Screen Recording** and **Accessibility** permissions are only needed for the **legacy** MCP UI/vision tooling.
