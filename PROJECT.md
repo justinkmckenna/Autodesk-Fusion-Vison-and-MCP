@@ -132,7 +132,7 @@ Deliverables (incremental):
 - Guardrails: bounds checks, allowed ops list, timeouts, and “no runaway topology” checks
 - Structured “preview” outputs before applying an edit
 
-Status: ⏳ not started
+Status: ✅ complete
 
 ## Verification approach (what “done” looks like)
 We will use a **hybrid** strategy over time:
@@ -165,3 +165,4 @@ Milestone alignment:
 - 2026-01-24: Implemented Milestone 3 view capture + camera controls (`get_camera`, `set_camera`, `capture_view`, `project_point`) with shared camera schema normalization and deterministic capture paths. Ray picking removed pending re-implementation.
 - 2026-01-24: Implemented `ray_pick` with viewport-scaled view-to-model mapping, closest-hit selection, and optional face normals; verified via `capture_view` + `ray_pick` round-trip.
 - 2026-01-24: Implemented Milestone 4 parameter edit primitive (`list_user_parameters`, `get_user_parameter`, `set_user_parameter`) plus Pillow-based visual diff tooling (`scripts/image_diff.py`); verification flow documented in README/MILESTONE4 spec with a full run recorded in `milestone_implmentation_specs/MILESTONE4_IMPLEMENTATION.md`.
+- 2026-01-24: Implemented Milestone 5 `extrude_feature` with deterministic planar face targeting, preview-only plan output, guardrails (distance/time/topology/body delta), and structured measurements for verification.
