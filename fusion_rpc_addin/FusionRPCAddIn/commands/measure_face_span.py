@@ -58,6 +58,10 @@ def _centroid_tuple_mm(convert_mm, units_mgr, point):
     )
 
 
+def _point_key(point):
+    return (point["x"], point["y"], point["z"])
+
+
 def _face_area_mm2(face):
     try:
         # Fusion internal units are cm; area is cm^2 -> mm^2 = *100.
@@ -298,6 +302,8 @@ def handle(request, context):
             continue
         length_mm = convert_mm(units_mgr, edge.length)
         edge_id = _entity_id(edge)
+        v0_id = _entity_id(v0)
+        v1_id = _entity_id(v1)
         qualifying_edges.append(
             {
                 "edge": edge,
@@ -305,6 +311,8 @@ def handle(request, context):
                 "length_mm": length_mm,
                 "v0_mm": _point_mm(convert_mm, units_mgr, p0),
                 "v1_mm": _point_mm(convert_mm, units_mgr, p1),
+                "v0_id": v0_id,
+                "v1_id": v1_id,
             }
         )
 
@@ -318,19 +326,34 @@ def handle(request, context):
 
     bottom_points = []
     for item in qualifying_edges:
-        bottom_points.append(item["v0_mm"])
-        bottom_points.append(item["v1_mm"])
+        bottom_points.append((item["v0_mm"], item["v0_id"]))
+        bottom_points.append((item["v1_mm"], item["v1_id"]))
 
     face_normal = _face_normal(selected)
-    projection_axis = _axis_for_projection(face_normal, bottom_points) if bottom_points else "x"
-    extent_min = min(pt[projection_axis] for pt in bottom_points)
-    extent_max = max(pt[projection_axis] for pt in bottom_points)
+    projection_axis = (
+        _axis_for_projection(face_normal, [pt for pt, _ in bottom_points])
+        if bottom_points
+        else "x"
+    )
+    points_sorted = sorted(
+        bottom_points,
+        key=lambda item: (
+            item[0][projection_axis],
+            item[0]["x"],
+            item[0]["y"],
+            item[0]["z"],
+        ),
+    )
+    extent_min = points_sorted[0][0][projection_axis]
+    extent_max = points_sorted[-1][0][projection_axis]
     projected_extent_mm = extent_max - extent_min
 
     qualifying_edges.sort(
         key=lambda item: (
             -item["length_mm"],
             item["id"] if item["id"] is not None else "",
+            _point_key(item["v0_mm"]),
+            _point_key(item["v1_mm"]),
         )
     )
     selected_edge = qualifying_edges[0]
@@ -356,16 +379,17 @@ def handle(request, context):
         "value_mm": selected_edge["length_mm"],
         "edge_id": selected_edge["id"],
         "endpoints_mm": [selected_edge["v0_mm"], selected_edge["v1_mm"]],
+        "vertex_ids": [selected_edge["v0_id"], selected_edge["v1_id"]],
     }
     if span_mode == "projected_extent":
+        min_point, min_vertex_id = points_sorted[0]
+        max_point, max_vertex_id = points_sorted[-1]
         span = {
             "mode": "projected_extent",
             "value_mm": projected_extent_mm,
             "axis": projection_axis,
-            "endpoints_mm": [
-                {projection_axis: extent_min},
-                {projection_axis: extent_max},
-            ],
+            "endpoints_mm": [min_point, max_point],
+            "vertex_ids": [min_vertex_id, max_vertex_id],
         }
 
     data = {
@@ -378,6 +402,10 @@ def handle(request, context):
             "centroid_mm": _point_mm(convert_mm, units_mgr, selected_centroid),
             "normal": face_normal_out,
             "bbox_mm": face_bbox_mm,
+            "selection": {
+                "score": candidates[0]["score"],
+                "score_type": selector["type"],
+            },
         },
         "bottom": {
             "eps_mm": eps_mm,
@@ -388,6 +416,8 @@ def handle(request, context):
                     "length_mm": item["length_mm"],
                     "v0_mm": item["v0_mm"],
                     "v1_mm": item["v1_mm"],
+                    "v0_id": item["v0_id"],
+                    "v1_id": item["v1_id"],
                 }
                 for item in qualifying_edges
             ],

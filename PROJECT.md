@@ -61,7 +61,7 @@ Definition of Done:
 - Deterministic outputs for the same model/session (aside from timestamps/paths)
 - Errors are explicit (no silent `None`); responses include `ok=false` + reason
 
-Status: ⏳ not started
+Status: ✅ complete
 
 ---
 
@@ -161,3 +161,4 @@ Milestone alignment:
 ## Progress log
 - 2026-01-19: Documented pivot + roadmap; next milestone set to face-based measurement (`measure_face_span`).
 - 2026-01-19: Implemented `measure_face_span` with `require_planar=false` default; selectors include `max_bbox_x`, `largest_area`, and `normal_closest:*`; added `span_mode=projected_extent` for mesh-derived solids. Note: negative test for `eps_mm` could not be forced due to model limitations (bottom edges match min-Z), so error-path verification is deferred.
+- 2026-01-24: Implemented Milestone 1 `status` + `get_body_info` for root-component visible solids only; `get_body_info` supports `include_hidden` and returns identity transform plus bbox/counts/physical summaries (mm).

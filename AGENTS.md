@@ -28,6 +28,11 @@
 - Use the CLI commands above for smoke testing; keep results deterministic across runs.
 - For Fusion add-in changes, verify with `ping`, `list_bodies`, and `measure_bbox`.
   - Prefer API-derived measurements and deterministic renders over OS-level screenshots.
+- When implementing a milestone, agents should run the relevant Python CLI scripts to verify behavior (no venv required unless explicitly provided).
+  - Example:
+    - `python3 scripts/fusion_rpc_client.py ping`
+    - `python3 scripts/fusion_rpc_client.py list_bodies`
+    - `python3 scripts/fusion_rpc_client.py measure_bbox`
 
 ## Commit & Pull Request Guidelines
 - Commit messages follow short, imperative statements (e.g., “Add RPC command hot-reload and docs”).
