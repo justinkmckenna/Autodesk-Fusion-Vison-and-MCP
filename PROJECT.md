@@ -134,6 +134,20 @@ Deliverables (incremental):
 
 Status: ✅ complete
 
+---
+
+### Milestone 6 — Core modeling command set (80% coverage)
+Goal: ship a practical, high-leverage set of sketch + feature commands that cover most real-world edits.
+
+Deliverables (incremental):
+- Sketch creation on plane or planar face
+- Basic sketch primitives (rectangle, circle, line)
+- Common feature ops: `hole`, `fillet`, `chamfer`, `pattern`, `mirror`, `shell`, `revolve`
+- Feature inventory/introspection + delete feature
+- Shared deterministic selection helpers (faces/edges by normal, area, bbox-extents, adjacency)
+
+Status: ✅ complete
+
 ## Verification approach (what “done” looks like)
 We will use a **hybrid** strategy over time:
 
@@ -166,3 +180,4 @@ Milestone alignment:
 - 2026-01-24: Implemented `ray_pick` with viewport-scaled view-to-model mapping, closest-hit selection, and optional face normals; verified via `capture_view` + `ray_pick` round-trip.
 - 2026-01-24: Implemented Milestone 4 parameter edit primitive (`list_user_parameters`, `get_user_parameter`, `set_user_parameter`) plus Pillow-based visual diff tooling (`scripts/image_diff.py`); verification flow documented in README/MILESTONE4 spec with a full run recorded in `milestone_implmentation_specs/MILESTONE4_IMPLEMENTATION.md`.
 - 2026-01-24: Implemented Milestone 5 `extrude_feature` with deterministic planar face targeting, preview-only plan output, guardrails (distance/time/topology/body delta), and structured measurements for verification.
+- 2026-01-24: Implemented Milestone 6 core modeling command set with shared selection helpers, sketch primitives (`create_sketch`, `sketch_add_rectangle`, `sketch_add_circle`, `sketch_add_line`), core features (`hole_feature`, `fillet_feature`, `chamfer_feature`, `pattern_feature`, `mirror_feature`, `shell_feature`, `revolve_feature`), and feature inventory/deletion (`list_features`, `get_feature_info`, `delete_feature`).

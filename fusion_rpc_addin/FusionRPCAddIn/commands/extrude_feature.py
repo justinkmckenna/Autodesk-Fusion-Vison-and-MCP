@@ -1,7 +1,18 @@
+import importlib
+import os
+import sys
 import time
 
 import adsk.core
 import adsk.fusion
+
+_MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+if _MODULE_DIR not in sys.path:
+    sys.path.append(_MODULE_DIR)
+
+import _selection_helpers as selection_helpers
+
+importlib.reload(selection_helpers)
 
 COMMAND = "extrude_feature"
 REQUIRES_DESIGN = True
@@ -273,7 +284,7 @@ def _mm_to_internal(units_mgr, value_mm):
 
 
 def _body_key(body):
-    entity = _entity_id(body)
+    entity = selection_helpers._entity_id(body)
     if entity:
         return ("id", entity)
     return ("name", getattr(body, "name", ""))
@@ -324,7 +335,7 @@ def handle(request, context):
     if units != "mm":
         return {"ok": False, "error": f"Unsupported units: {units}. Only 'mm' is supported."}
 
-    selector = _parse_face_selector(face_selector)
+    selector = selection_helpers._parse_face_selector(face_selector)
     if not selector:
         return {"ok": False, "error": f"Unsupported face_selector: {face_selector}"}
 
@@ -350,7 +361,7 @@ def handle(request, context):
     if distance_mm > MAX_EXTRUDE_MM:
         return {"ok": False, "error": f"distance_mm exceeds MAX_EXTRUDE_MM ({MAX_EXTRUDE_MM})"}
 
-    body, bodies = _resolve_body(root_comp, body_name)
+    body, bodies = selection_helpers._resolve_body(root_comp, body_name)
     if not body:
         candidates = sorted([b.name for b in bodies])
         if body_name:
@@ -367,16 +378,16 @@ def handle(request, context):
             "candidates": candidates,
         }
 
-    selected, candidate_count = _select_face(body, selector, units_mgr, convert_mm)
+    selected, candidate_count = selection_helpers._select_face(body, selector, units_mgr, convert_mm)
     if not selected:
         return {"ok": False, "error": "No planar faces matched selector."}
 
     face = selected["face"]
-    centroid_mm = _point_mm(convert_mm, units_mgr, selected["centroid"])
+    centroid_mm = selection_helpers._point_mm(convert_mm, units_mgr, selected["centroid"])
     normal = selected["normal"]
     if normal is None:
         try:
-            normal = _normalize_vector(face.geometry.normal)
+            normal = selection_helpers._normalize_vector(face.geometry.normal)
         except Exception:
             normal = None
 
@@ -408,7 +419,7 @@ def handle(request, context):
             },
         }
 
-    before_visible = _list_visible_bodies(root_comp)
+    before_visible = selection_helpers._list_visible_bodies(root_comp)
     before_counts = _total_counts(before_visible)
     before_body_count = len(before_visible)
     measure_before = _body_measurement(body, units_mgr, convert_mm)
@@ -440,7 +451,7 @@ def handle(request, context):
                 pass
         return {"ok": False, "error": f"Extrude failed: {exc}", "data": {"preview": {"plan": plan}}}
 
-    after_visible = _list_visible_bodies(root_comp)
+    after_visible = selection_helpers._list_visible_bodies(root_comp)
     after_counts = _total_counts(after_visible)
     after_body_count = len(after_visible)
 
@@ -546,7 +557,10 @@ def handle(request, context):
     data = {
         "preview": {"is_preview": False, "plan": plan},
         "apply": {
-            "feature": {"id": _entity_id(feature), "name": getattr(feature, "name", None)},
+            "feature": {
+                "id": selection_helpers._entity_id(feature),
+                "name": getattr(feature, "name", None),
+            },
             "compute": {"ran": compute_ran},
             "timing_ms": timing_ms,
         },
