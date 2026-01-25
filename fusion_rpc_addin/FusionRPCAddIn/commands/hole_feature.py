@@ -17,7 +17,7 @@ importlib.reload(selection_helpers)
 COMMAND = "hole_feature"
 REQUIRES_DESIGN = True
 
-MAX_DISTANCE_MM = 50.0
+MAX_DISTANCE_MM = 100.0
 MAX_APPLY_MS = 5000.0
 MAX_FACE_DELTA = 200
 MAX_EDGE_DELTA = 400
@@ -31,6 +31,28 @@ def _mm_to_internal(units_mgr, value_mm):
         return units_mgr.convert(value_mm, "mm", units_mgr.internalUnits)
     except Exception:
         return value_mm / 10.0
+
+
+def _project_point_to_plane(point, plane):
+    try:
+        origin = plane.origin
+        normal = plane.normal
+    except Exception:
+        return point
+    try:
+        vec = adsk.core.Vector3D.create(
+            point.x - origin.x,
+            point.y - origin.y,
+            point.z - origin.z,
+        )
+        dist = vec.dotProduct(normal)
+        return adsk.core.Point3D.create(
+            point.x - normal.x * dist,
+            point.y - normal.y * dist,
+            point.z - normal.z * dist,
+        )
+    except Exception:
+        return point
 
 
 def _total_counts(bodies):
@@ -165,6 +187,20 @@ def handle(request, context):
             _mm_to_internal(units_mgr, center["y"]),
             _mm_to_internal(units_mgr, center["z"]),
         )
+        try:
+            geom = face.geometry
+        except Exception:
+            geom = None
+        if geom:
+            try:
+                if geom.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType:
+                    center_internal = _project_point_to_plane(center_internal, geom)
+            except Exception:
+                try:
+                    if geom.isPlane:
+                        center_internal = _project_point_to_plane(center_internal, geom)
+                except Exception:
+                    pass
         try:
             center_internal = sketch.modelToSketchSpace(center_internal)
         except Exception:

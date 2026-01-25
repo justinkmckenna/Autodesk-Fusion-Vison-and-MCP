@@ -9,4 +9,6 @@ if [ -d "$CAPTURES_DIR" ]; then
   rm -f "$CAPTURES_DIR"/*.png
 fi
 
-echo "Cleared logs: captures"
+find "$LOG_DIR" -maxdepth 1 -type f -name "diff_*.png" -delete
+
+echo "Cleared logs: captures, diff images in logs/"

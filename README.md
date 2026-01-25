@@ -86,3 +86,9 @@ python3 scripts/fusion_rpc_client.py measure_bbox
 
 ## Notes
 - You can set RPC-related values in a `.env` file in the project root (or set `FUSION_ENV_PATH` to point elsewhere).
+
+## Draft Rebuild Pitfalls (Test 1)
+Observed issues when rebuilding from a 2D drawing:
+- `extrude_profile` with `join` can unintentionally extend the part (e.g., doubling length). Always re-check `measure_bbox` after join operations.
+- Sketch-only holes can be mistaken for cuts; verify holes by `measure_bbox` or by reselecting the face and ensuring material is removed.
+- Camera captures can be misleading if the camera is not a clean orthographic view; re-verify dimensions via API after each feature.
