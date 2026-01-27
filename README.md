@@ -31,6 +31,13 @@ python3 fusion_rpc_client.py run_python --code "result = app.activeProduct is no
 python3 fusion_rpc_client.py run_python --code "print('hello'); result = 123" --label hello
 ```
 
+## Context7 MCP Recommendation
+Use the Context7 MCP server when working with this add-in to quickly look up Fusion 360 API classes and usage without relying on ad-hoc web searches.
+
+Recommended libraries:
+- `/autodeskfusion360/autodeskfusion360.github.io` — primary index for Fusion 360 API surface.
+- `/ipendle/autodesk-fusion-api-documentation` — secondary source for usage snippets.
+
 ## Files
 - `FusionRPCAddIn.py`: Fusion RPC add-in (authoritative execution engine).
 - `fusion_rpc_client.py`: CLI for sending RPC commands.
