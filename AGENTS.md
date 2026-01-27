@@ -15,7 +15,11 @@
 
 ## Verification Strategy
 - After any edit command (extrude, cut, fillet, pattern, sketch-driven change), run verification to confirm progress toward the end goal.
-- Run visual captures after every major feature using `capture_standard_views` and compare against the reference (e.g., `draft.png`).
+- Run visual captures after every major feature using `capture_standard_views` and compare against the reference using Pillow (e.g., `draft.png`).
 - Run numerical checks after every major feature: `list_bodies`, `measure_bbox`, and targeted measurements for the changed dimension.
-  - Use Fusion APIs directly in `run_python` snippets: enumerate `root_comp.bRepBodies` and use `boundingBox` for overall dimensions.
-  - For visual captures, use Fusion view APIs via `app.activeViewport` (camera manipulation + `saveAsImageFile`) to set top/front/right/iso and export viewport images, then compare captures with Pillow.
+- Use other verification means as needed and report to the user if you found other means of measurement for verification useful.
+
+### Verification Snippets (run_python)
+- `scripts/list_bodies.py` — list visible solid bodies.
+- `scripts/measure_bbox.py` — measure bounding box (mm) for a named body (edit `body_name`).
+- `scripts/capture_standard_views.py` — capture top/front/right/iso to `logs/captures`.
